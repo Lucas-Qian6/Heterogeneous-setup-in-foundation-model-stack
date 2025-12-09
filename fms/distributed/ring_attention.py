@@ -349,8 +349,10 @@ def _compute_attention_ring_pass_kv(
 
     # Check if any off-diagonal block contributes (determines if we can use Flash Attention shortcut)
     has_offdiag = _has_offdiag_contribution(strategy, q_start, num_valid_tokens, causal)
+    print(f"[DEBUG rank={strategy.rank}] has_offdiag={has_offdiag}, q_start={q_start}, num_valid_tokens={num_valid_tokens}")
 
     for i in range(strategy.world_size):
+        print(f"[DEBUG rank={strategy.rank}] loop i={i}, world_size={strategy.world_size}")
         # Start async comm for next iteration (overlaps with compute)
         comm_start_event = None
 
@@ -359,9 +361,11 @@ def _compute_attention_ring_pass_kv(
         did_offdiag_compute = False
 
         if i < strategy.world_size - 1:
+            print(f"[DEBUG rank={strategy.rank}] starting async comm")
             reqs, recv_k, recv_v, recv_len, comm_start_event = strategy.ring_shift_kv_async(
                 cur_k, cur_v, cur_len, enable_timing=PROFILE
             )
+            print(f"[DEBUG rank={strategy.rank}] async comm started")
 
         # Record compute start event on DEFAULT stream
         compute_start = torch.cuda.Event(enable_timing=True) if PROFILE else None
@@ -390,6 +394,7 @@ def _compute_attention_ring_pass_kv(
                 # Diagonal block handling
                 if not has_offdiag and causal:
                     # No off-diagonal blocks contribute → Flash Attention shortcut (rank 0)
+                    print(f"[DEBUG rank={strategy.rank}] using Flash Attention for diagonal")
                     flash_out = F.scaled_dot_product_attention(
                         q, k, v,
                         attn_mask=None,
@@ -397,17 +402,20 @@ def _compute_attention_ring_pass_kv(
                         is_causal=True,
                         scale=1.0/scale
                     )
+                    print(f"[DEBUG rank={strategy.rank}] Flash Attention done")
                     numerator = flash_out.to(accum_dtype)
                     denominator = torch.ones((batch_size, nheads, num_valid_tokens, 1), device=q.device, dtype=accum_dtype)
                     max_score = torch.zeros((batch_size, nheads, num_valid_tokens, 1), device=q.device, dtype=accum_dtype)
                 else:
                     # Need to merge with off-diagonal → use Triton to get stats (rank 1)
+                    print(f"[DEBUG rank={strategy.rank}] using Triton for diagonal")
                     key_indices = torch.arange(block_offset, block_offset + cur_len, device=q.device)
                     z_block, l_block, m_block = _block_softmax_stats(
                         q_cast, cur_k, cur_v,
                         query_indices, key_indices,
                         scale, mask, causal
                     )
+                    print(f"[DEBUG rank={strategy.rank}] Triton diagonal done")
                     numerator, denominator, max_score = _online_softmax_merge_stats(
                         z_block, l_block, m_block,
                         numerator, denominator, max_score
@@ -441,9 +449,11 @@ def _compute_attention_ring_pass_kv(
 
         # Wait for comm and get end event (records AFTER transfers complete)
         if i < strategy.world_size - 1:
+            print(f"[DEBUG rank={strategy.rank}] waiting for comm")
             cur_k, cur_v, cur_len, comm_end_event = strategy.ring_shift_kv_wait(
                 reqs, recv_k, recv_v, recv_len, enable_timing=PROFILE
             )
+            print(f"[DEBUG rank={strategy.rank}] comm done, cur_len={cur_len}")
 
             if PROFILE:
                 total_bytes_transferred += cur_k.numel() * cur_k.element_size()
@@ -452,7 +462,9 @@ def _compute_attention_ring_pass_kv(
                     comm_events.append((comm_start_event, comm_end_event))
 
             cur_k, cur_v = cur_k.to(accum_dtype), cur_v.to(accum_dtype)
+        print(f"[DEBUG rank={strategy.rank}] end of loop i={i}")
 
+    print(f"[DEBUG rank={strategy.rank}] exited ring loop")
     # Synchronize and compute timing from CUDA events
     torch.cuda.synchronize()
 

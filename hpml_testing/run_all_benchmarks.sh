@@ -24,6 +24,9 @@ module load cuda/12.6
 SUMMARY_CSV="$RESULTS_DIR/summary_${TIMESTAMP}.csv"
 LOG_FILE="$RESULTS_DIR/run_${TIMESTAMP}.log"
 
+SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+export PYTHONPATH="$SCRIPT_DIR/../:$PYTHONPATH"
+
 echo "CUDA_VISIBLE_DEVICES: $CUDA_VISIBLE_DEVICES"
 nvidia-smi
 mkdir -p "$RESULTS_DIR"

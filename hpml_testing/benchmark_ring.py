@@ -90,17 +90,15 @@ def run_benchmark(model, input_ids, num_decode, label, device, is_ring=False):
     if is_ring:
         reset_layer_counter()
 
-    # Warmup pass to initialize NCCL connections (not timed)
+    # Warmup pass 
+    print0("Warmup pass")
+    with torch.no_grad():
+        _ = model.forward(ids, use_cache=False)
+    if device.type == "cuda":
+        torch.cuda.synchronize()
     if is_ring:
-        print0("  [Warmup pass...]")
-        with torch.no_grad():
-            _ = model.forward(ids[:, :min(32, ids.size(1))], use_cache=False)
-        if device.type == "cuda":
-            torch.cuda.synchronize()
-        if dist.is_initialized():
-            dist.barrier()
-        reset_layer_counter()  # Reset again after warmup
-        print0("  [Warmup done, starting timed run...]")
+        reset_layer_counter()
+    print0("Warmup done, starting timed run")
 
     if device.type == "cuda":
         torch.cuda.synchronize()
@@ -200,25 +198,24 @@ def main():
 
         # Regular only runs on rank 0
         is_regular = strategy is NoOpStrategy
-        if is_regular and rank != 0:
-            if world_size > 1:
-                dist.barrier()
-            continue
+        should_run = not (is_regular and rank != 0)
 
-        if args.device_type == "cuda":
-            torch.cuda.empty_cache()
+        if should_run:
+            if args.device_type == "cuda":
+                torch.cuda.empty_cache()
 
-        model = setup_model(args, strategy, dtype)
-        is_ring = (strategy == "ring")
-        result = run_benchmark(model, ids, args.num_decode_tokens, label, device, is_ring=is_ring)
-        result["strategy"] = label
-        results.append(result)
+            model = setup_model(args, strategy, dtype)
+            is_ring = (strategy == "ring")
+            result = run_benchmark(model, ids, args.num_decode_tokens, label, device, is_ring=is_ring)
+            result["strategy"] = label
+            results.append(result)
 
-        del model
-        gc.collect()
-        if args.device_type == "cuda":
-            torch.cuda.empty_cache()
+            del model
+            gc.collect()
+            if args.device_type == "cuda":
+                torch.cuda.empty_cache()
 
+        # ALL ranks sync here (same barrier for everyone)
         if world_size > 1:
             dist.barrier()
 
@@ -239,8 +236,10 @@ def main():
         print0("-" * 50)
         for r in results:
             print0(f"{r['strategy']:<10} {args.num_tokens:<8} {r['ttft_ms']:<10.2f} {r['avg_decode_ms']:<12.2f} {r['total_time_ms']:<10.2f}")
-
-
+    print("printed results")
+    if world_size > 1 and dist.is_initialized():
+        print("hanging at dist.barrier()")
+        dist.barrier()
 if __name__ == "__main__":
     try:
         main()

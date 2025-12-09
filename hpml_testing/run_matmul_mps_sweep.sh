@@ -14,7 +14,7 @@ set -euo pipefail
 #   BG_STREAMS: background streams to add contention
 #   OUT_CSV: output CSV path
 
-SIZES=${SIZES:-"64 128 256 512 1024 2048 4096 8192"}
+SIZES=${SIZES:-"64 128 256 512 1024 2048 4096 8192 16384 32768"}
 MPS_PCTS=${MPS_PCTS:-"100 80 60 40 20 15 10 5 2.5 1"}
 DTYPE=${DTYPE:-float16}
 NUM_ITERS=${NUM_ITERS:-20}

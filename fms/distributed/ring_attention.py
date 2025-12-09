@@ -409,7 +409,12 @@ def _compute_attention_ring_pass_kv(
                 else:
                     # Need to merge with off-diagonal → use Triton to get stats (rank 1)
                     print(f"[DEBUG rank={strategy.rank}] using Triton for diagonal")
+                    if strategy._comm_stream is not None:
+                          torch.cuda.current_stream().wait_stream(strategy._comm_stream)
                     key_indices = torch.arange(block_offset, block_offset + cur_len, device=q.device)
+                    print(f"[DEBUG rank={strategy.rank}] using Triton for diagonal")
+                    print(f"[DEBUG rank={strategy.rank}] q_cast.dtype={q_cast.dtype}, cur_k.dtype={cur_k.dtype}, cur_v.dtype={cur_v.dtype}")
+                    print("starting kernel")
                     # TODO: mask needs to be sliced to [q_start:q_start+Q_len, block_offset:block_offset+K_len] for non-None masks
                     z_block, l_block, m_block = _block_softmax_stats(
                         q_cast, cur_k, cur_v,
@@ -424,6 +429,8 @@ def _compute_attention_ring_pass_kv(
                 did_diag_compute = True
             else:
                 # Off-diagonal block: use Triton to get stats for merging
+                if strategy._comm_stream is not None:
+                    torch.cuda.current_stream().wait_stream(strategy._comm_stream)
                 key_indices = torch.arange(block_offset, block_offset + cur_len, device=q.device)
                 z_block, l_block, m_block = _block_softmax_stats(
                     q_cast, cur_k, cur_v,
@@ -667,6 +674,8 @@ def _block_softmax_stats(
             return _block_softmax_stats_naive(
                 Q, K, V, query_indices, key_indices, scale, mask, causal
             )
+        
+        print(f"[DEBUG] Using Triton kernel for block softmax stats with work={work}")
         return block_softmax_stats_triton(
             Q, K, V, query_indices, key_indices, scale, mask, causal
         )

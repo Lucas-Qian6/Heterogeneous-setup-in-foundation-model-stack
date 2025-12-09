@@ -1,17 +1,3 @@
-"""
-Single-GPU matmul microbenchmark with optional background load.
-
-Use this to probe how a big matrix multiplication behaves under different
-contention scenarios by launching extra matmuls on separate CUDA streams.
-
-Example:
-  python hpml_testing/benchmark_single_gpu_matmul.py \
-      --sizes 4096 8192 \
-      --dtype float16 \
-      --num-iters 20 \
-      --warmup-iters 5 \
-      --background-streams 2
-"""
 import argparse
 import math
 from typing import List, Tuple

@@ -25,7 +25,7 @@ def _offdiag_block_stats_kernel(
     """
     Each program handles BLOCK_Q queries for a fixed (b, h), and loops over K in BLOCK_K tiles.
     """
-    print("actually Entering triton kernel")
+    # print("actually Entering triton kernel")
     # How many query blocks per (b,h)
     Q_BLOCKS = (Q_LEN + BLOCK_Q - 1) // BLOCK_Q
 

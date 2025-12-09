@@ -147,6 +147,18 @@ def main():
     torch.cuda.synchronize()
     elapsed = (time.perf_counter() - start) / num_iters * 1000
 
+    out_ref = torch.nn.functional.scaled_dot_product_attention(
+    q.float(), k.float(), v.float(),
+    attn_mask=None,
+    dropout_p=0.0,
+    is_causal=causal,
+).half()
+    
+
+    if rank == 0:
+        diff = (out - out_ref).abs()
+        print("max diff:", diff.max().item(), "mean diff:", diff.mean().item())
+
 
 
     elapsed_tensor = torch.tensor([elapsed], device=device)

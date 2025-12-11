@@ -247,18 +247,22 @@ class RingAttentionStrategy(DistributedStrategy):
         k: torch.Tensor,
         v: torch.Tensor,
         valid_len: int,
+        iteration: int,
         enable_timing: bool = False,
-    ) -> Tuple[Any, torch.Tensor, torch.Tensor, torch.Tensor, Optional[torch.cuda.Event]]:
+    ) -> Tuple[Any, torch.Tensor, torch.Tensor, int, Optional[torch.cuda.Event]]:
         """
         Start async KV ring shift. Returns (requests, recv_k, recv_v, recv_len, comm_start_event).
         Communication runs on dedicated stream for overlap with compute.
         If enable_timing=True, returns CUDA event for start time. End event is recorded in ring_shift_kv_wait.
         """
+        # After iteration i, we receive from rank (self.rank - (i+1)) % world_size
+        recv_from = (self.rank - (iteration + 1)) % self.world_size
+        recv_len = self.block_lens[recv_from]
+
         if self.world_size == 1:
-            return None, k, v, torch.tensor([valid_len], device=k.device), None
+            return None, k, v, recv_len, None
 
         send_to = (self.rank + 1) % self.world_size
-        recv_from = (self.rank - 1 + self.world_size) % self.world_size
         seq_dim = 2
 
         # Slice and pad KV to block_size
@@ -273,8 +277,6 @@ class RingAttentionStrategy(DistributedStrategy):
 
         recv_k = torch.empty_like(send_k)
         recv_v = torch.empty_like(send_v)
-        send_len = torch.tensor([valid_len], dtype=torch.int32, device=k.device)
-        recv_len = torch.empty(1, dtype=torch.int32, device=k.device)
 
         # Record event so comm stream waits for send buffers to be ready
         ready_event = torch.cuda.Event()
@@ -291,8 +293,6 @@ class RingAttentionStrategy(DistributedStrategy):
                 comm_start_event.record()
 
             ops = [
-                P2POp(dist.isend, send_len, send_to),
-                P2POp(dist.irecv, recv_len, recv_from),
                 P2POp(dist.isend, send_k, send_to),
                 P2POp(dist.irecv, recv_k, recv_from),
                 P2POp(dist.isend, send_v, send_to),
@@ -307,32 +307,32 @@ class RingAttentionStrategy(DistributedStrategy):
         reqs: Any,
         recv_k: torch.Tensor,
         recv_v: torch.Tensor,
-        recv_len: torch.Tensor,
+        recv_len: int,
         enable_timing: bool = False,
-    ) -> Tuple[torch.Tensor, torch.Tensor, int, Optional[torch.cuda.Event]]:
+    ) -> Tuple[torch.Tensor, torch.Tensor, int, Optional[torch.cuda.Event], Optional[torch.cuda.Event]]:
         """
-        Wait for async KV shift to complete. Returns (k, v, valid_len, comm_end_event).
-        If enable_timing=True, records and returns a CUDA event after transfers complete.
+        Wait for async KV shift to complete. Returns (k, v, valid_len, comm_end_event, sync_event).
         """
         if reqs is None:
-            return recv_k, recv_v, recv_len.item(), None
+            return recv_k, recv_v, recv_len, None, None
 
         for req in reqs:
             req.wait()
 
-        # Record end event AFTER transfers complete (on comm stream)
+        # Record events on comm stream AFTER transfers complete
         comm_end_event = None
-        if enable_timing:
-            comm_end_event = torch.cuda.Event(enable_timing=True)
-            with torch.cuda.stream(self._comm_stream):
+        sync_event = torch.cuda.Event()
+
+        with torch.cuda.stream(self._comm_stream):
+            if enable_timing:
+                comm_end_event = torch.cuda.Event(enable_timing=True)
                 comm_end_event.record()
+            sync_event.record()
 
-        self._comm_stream.synchronize()
-
-        new_len = recv_len.item()
-        if new_len == 0:
-            return recv_k[:, :, :0], recv_v[:, :, :0], 0, comm_end_event
-        return recv_k[:, :, :new_len].contiguous(), recv_v[:, :, :new_len].contiguous(), new_len, comm_end_event
+        # No synchronize() needed - recv_len is already known from block_lens
+        if recv_len == 0:
+            return recv_k[:, :, :0], recv_v[:, :, :0], 0, comm_end_event, sync_event
+        return recv_k[:, :, :recv_len].contiguous(), recv_v[:, :, :recv_len].contiguous(), recv_len, comm_end_event, sync_event
  
     @property
     def local_q_len(self) -> int:

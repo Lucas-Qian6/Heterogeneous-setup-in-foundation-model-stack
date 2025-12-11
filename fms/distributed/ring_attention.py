@@ -314,19 +314,24 @@ def _compute_attention_ring_pass_kv(
 ) -> Tensor:
     """
     Ring attention with online softmax and async comm/compute overlap.
+    Uses Triton/stats-based computation for ALL blocks to ensure correct
+    online softmax merging and prevent deadlocks (all ranks execute same code path).
     """
     global _layer_call_counter, _printed_stream_info, _total_compute_ms, _total_comm_ms, _total_bytes
 
     batch_size, nheads, _, emb_v = q.shape[0], q.shape[1], q.shape[2], v.shape[-1]
 
-    # Online softmax accumulators
+    # Online softmax accumulators (FP32)
     numerator = torch.zeros((batch_size, nheads, num_valid_tokens, emb_v), device=q.device, dtype=accum_dtype)
     denominator = torch.zeros((batch_size, nheads, num_valid_tokens, 1), device=q.device, dtype=accum_dtype)
     max_score = torch.full((batch_size, nheads, num_valid_tokens, 1), float("-inf"), device=q.device, dtype=accum_dtype)
 
+    # Cast inputs once
     q_cast = q.to(accum_dtype)
     cur_k, cur_v = k.to(accum_dtype), v.to(accum_dtype)
     cur_len = cur_k.shape[2]
+
+    # Global indices for causal masking
     query_indices = torch.arange(q_start, q_start + num_valid_tokens, device=q.device)
 
     # Timing accumulators
@@ -347,25 +352,23 @@ def _compute_attention_ring_pass_kv(
         _printed_stream_info = True
         _print_stream_info(strategy)
 
-    # Check if any off-diagonal block contributes (determines if we can use Flash Attention shortcut)
-    has_offdiag = _has_offdiag_contribution(strategy, q_start, num_valid_tokens, causal)
-    print(f"[DEBUG rank={strategy.rank}] has_offdiag={has_offdiag}, q_start={q_start}, num_valid_tokens={num_valid_tokens}")
+    # DEBUG: Test if Triton works without NCCL communication
+    _DEBUG_DISABLE_COMM = False  # Set to True to test Triton without comm
 
+    # Main Ring Loop
     for i in range(strategy.world_size):
-        print(f"[DEBUG rank={strategy.rank}] loop i={i}, world_size={strategy.world_size}")
-        # Start async comm for next iteration (overlaps with compute)
+        # 1. Start async comm for next iteration (overlaps with compute)
         comm_start_event = None
+        reqs, recv_k, recv_v, recv_len = None, None, None, None
 
-        # NEW: track what we actually compute this iteration
+        # Track what we actually compute this iteration
         did_diag_compute = False
         did_offdiag_compute = False
 
-        if i < strategy.world_size - 1:
-            print(f"[DEBUG rank={strategy.rank}] starting async comm")
+        if i < strategy.world_size - 1 and not _DEBUG_DISABLE_COMM:
             reqs, recv_k, recv_v, recv_len, comm_start_event = strategy.ring_shift_kv_async(
-                cur_k, cur_v, cur_len, enable_timing=PROFILE
+                cur_k, cur_v, cur_len, iteration=i, enable_timing=PROFILE
             )
-            print(f"[DEBUG rank={strategy.rank}] async comm started")
 
         # Record compute start event on DEFAULT stream
         compute_start = torch.cuda.Event(enable_timing=True) if PROFILE else None
@@ -373,77 +376,51 @@ def _compute_attention_ring_pass_kv(
         if compute_start:
             compute_start.record()
 
-        # Compute attention on current block
+        # 2. Identify block source and offset
         source_rank = (strategy.rank - i) % strategy.world_size
         block_offset = strategy.block_starts[source_rank]
-        is_diagonal = (i == 0)  # Diagonal block: Q and K are from same positions
+        is_diagonal = (i == 0)  # Diagonal block: Q and K are from same rank's tokens
 
+        # 3. Compute attention on current block using Triton
         if num_valid_tokens > 0 and cur_len > 0:
-            # For causal attention, check if this block is fully masked
-            # Block is fully masked if all K positions are "future" relative to all Q positions
-            # i.e., smallest K index > largest Q index
             k_start = block_offset
-            k_end = block_offset + cur_len - 1
             q_end = q_start + num_valid_tokens - 1
 
-            if causal and k_start > q_end:
-                # Fully masked block - skip computation entirely!
-                # (All K positions are "future" relative to all Q positions)
-                pass
-            elif is_diagonal:
-                # Diagonal block handling
-                if not has_offdiag and causal:
-                    # No off-diagonal blocks contribute → Flash Attention shortcut (rank 0)
-                    print(f"[DEBUG rank={strategy.rank}] using Flash Attention for diagonal")
-                    flash_out = F.scaled_dot_product_attention(
-                        q, k, v,
-                        attn_mask=None,
-                        dropout_p=0.0,
-                        is_causal=True,
-                        scale=1.0/scale
-                    )
-                    print(f"[DEBUG rank={strategy.rank}] Flash Attention done")
-                    numerator = flash_out.to(accum_dtype)
-                    denominator = torch.ones((batch_size, nheads, num_valid_tokens, 1), device=q.device, dtype=accum_dtype)
-                    max_score = torch.zeros((batch_size, nheads, num_valid_tokens, 1), device=q.device, dtype=accum_dtype)
-                else:
-                    # Need to merge with off-diagonal → use Triton to get stats (rank 1)
-                    print(f"[DEBUG rank={strategy.rank}] using Triton for diagonal")
-                    if strategy._comm_stream is not None:
-                          torch.cuda.current_stream().wait_stream(strategy._comm_stream)
-                    key_indices = torch.arange(block_offset, block_offset + cur_len, device=q.device)
-                    print(f"[DEBUG rank={strategy.rank}] using Triton for diagonal")
-                    print(f"[DEBUG rank={strategy.rank}] q_cast.dtype={q_cast.dtype}, cur_k.dtype={cur_k.dtype}, cur_v.dtype={cur_v.dtype}")
-                    print("starting kernel")
-                    # TODO: mask needs to be sliced to [q_start:q_start+Q_len, block_offset:block_offset+K_len] for non-None masks
-                    z_block, l_block, m_block = _block_softmax_stats(
-                        q_cast, cur_k, cur_v,
-                        query_indices, key_indices,
-                        scale, mask, causal
-                    )
-                    print(f"[DEBUG rank={strategy.rank}] Triton diagonal done")
-                    numerator, denominator, max_score = _online_softmax_merge_stats(
-                        z_block, l_block, m_block,
-                        numerator, denominator, max_score
-                    )
-                did_diag_compute = True
-            else:
-                # Off-diagonal block: use Triton to get stats for merging
-                if strategy._comm_stream is not None:
-                    torch.cuda.current_stream().wait_stream(strategy._comm_stream)
+            # Skip block ONLY if fully masked by causality
+            # (i.e., the earliest Key in this block is after the latest Query)
+            is_fully_masked = causal and (k_start > q_end)
+
+            if not is_fully_masked:
                 key_indices = torch.arange(block_offset, block_offset + cur_len, device=q.device)
+
+                # Correctly slice mask for this specific block [Local Q, Remote K]
+                mask_slice = None
+                if mask is not None:
+                    m_q_start = q_start
+                    m_q_end = q_start + num_valid_tokens
+                    m_k_start = block_offset
+                    m_k_end = block_offset + cur_len
+                    if mask.ndim >= 2:
+                        mask_slice = mask[..., m_q_start:m_q_end, m_k_start:m_k_end]
+
+                # --- UNIFIED PATH: Always use Triton/naive stats ---
+                # This ensures consistent timing and math across all ranks
                 z_block, l_block, m_block = _block_softmax_stats(
                     q_cast, cur_k, cur_v,
                     query_indices, key_indices,
-                    scale, mask, causal
+                    scale, mask_slice, causal
                 )
 
+                # Merge this block's stats into the global accumulator
                 numerator, denominator, max_score = _online_softmax_merge_stats(
                     z_block, l_block, m_block,
                     numerator, denominator, max_score
                 )
 
-                did_offdiag_compute = True
+                if is_diagonal:
+                    did_diag_compute = True
+                else:
+                    did_offdiag_compute = True
 
         # Record compute end event on DEFAULT stream
         if compute_end:
@@ -455,13 +432,11 @@ def _compute_attention_ring_pass_kv(
             elif did_offdiag_compute:
                 offdiag_compute_events.append((compute_start, compute_end))
 
-        # Wait for comm and get end event (records AFTER transfers complete)
-        if i < strategy.world_size - 1:
-            print(f"[DEBUG rank={strategy.rank}] waiting for comm")
-            cur_k, cur_v, cur_len, comm_end_event = strategy.ring_shift_kv_wait(
+        # 4. Wait for comm and get new K,V for next iteration
+        if i < strategy.world_size - 1 and not _DEBUG_DISABLE_COMM:
+            cur_k, cur_v, cur_len, comm_end_event, sync_event = strategy.ring_shift_kv_wait(
                 reqs, recv_k, recv_v, recv_len, enable_timing=PROFILE
             )
-            print(f"[DEBUG rank={strategy.rank}] comm done, cur_len={cur_len}")
 
             if PROFILE:
                 total_bytes_transferred += cur_k.numel() * cur_k.element_size()
@@ -469,10 +444,12 @@ def _compute_attention_ring_pass_kv(
                 if comm_start_event and comm_end_event:
                     comm_events.append((comm_start_event, comm_end_event))
 
-            cur_k, cur_v = cur_k.to(accum_dtype), cur_v.to(accum_dtype)
-        print(f"[DEBUG rank={strategy.rank}] end of loop i={i}")
+            # Default stream waits for comm before using received tensors
+            if sync_event is not None:
+                torch.cuda.current_stream().wait_event(sync_event)
 
-    print(f"[DEBUG rank={strategy.rank}] exited ring loop")
+            cur_k, cur_v = cur_k.to(accum_dtype), cur_v.to(accum_dtype)
+
     # Synchronize and compute timing from CUDA events
     torch.cuda.synchronize()
 
@@ -487,7 +464,7 @@ def _compute_attention_ring_pass_kv(
 
     for start_evt, end_evt in compute_events:
         total_compute_time_ms += start_evt.elapsed_time(end_evt)
-    
+
     for start_evt, end_evt in diag_compute_events:
         total_diag_compute_ms += start_evt.elapsed_time(end_evt)
 
@@ -500,7 +477,7 @@ def _compute_attention_ring_pass_kv(
     _total_comm_ms += total_comm_time_ms
     _total_bytes += total_bytes_transferred
 
-    # Print timing (only rank 0, first layer only)
+    # Print timing (only rank 1, first layer only)
     if PROFILE and strategy.rank == 1 and should_print:
         comm_bandwidth_gbps = (total_bytes_transferred / 1e9) / (total_comm_time_ms / 1000) if total_comm_time_ms > 0 else 0
 
@@ -674,8 +651,7 @@ def _block_softmax_stats(
             return _block_softmax_stats_naive(
                 Q, K, V, query_indices, key_indices, scale, mask, causal
             )
-        
-        print(f"[DEBUG] Using Triton kernel for block softmax stats with work={work}")
+
         return block_softmax_stats_triton(
             Q, K, V, query_indices, key_indices, scale, mask, causal
         )

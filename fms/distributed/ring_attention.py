@@ -361,7 +361,7 @@ def _compute_attention_ring_pass_kv(
         comm_start_event = None
         reqs, recv_k, recv_v, recv_len = None, None, None, None
 
-        # Track what we actually compute this iteration
+        # Track what is being computed this iteration
         did_diag_compute = False
         did_offdiag_compute = False
 
@@ -370,7 +370,7 @@ def _compute_attention_ring_pass_kv(
                 cur_k, cur_v, cur_len, iteration=i, enable_timing=PROFILE
             )
 
-        # Record compute start event on DEFAULT stream
+        # Record compute start event on default stream
         compute_start = torch.cuda.Event(enable_timing=True) if PROFILE else None
         compute_end = torch.cuda.Event(enable_timing=True) if PROFILE else None
         if compute_start:
@@ -387,7 +387,6 @@ def _compute_attention_ring_pass_kv(
             q_end = q_start + num_valid_tokens - 1
 
             # Skip block ONLY if fully masked by causality
-            # (i.e., the earliest Key in this block is after the latest Query)
             is_fully_masked = causal and (k_start > q_end)
 
             if not is_fully_masked:
@@ -403,7 +402,6 @@ def _compute_attention_ring_pass_kv(
                     if mask.ndim >= 2:
                         mask_slice = mask[..., m_q_start:m_q_end, m_k_start:m_k_end]
 
-                # --- UNIFIED PATH: Always use Triton/naive stats ---
                 # This ensures consistent timing and math across all ranks
                 z_block, l_block, m_block = _block_softmax_stats(
                     q_cast, cur_k, cur_v,
@@ -447,6 +445,10 @@ def _compute_attention_ring_pass_kv(
             # Default stream waits for comm before using received tensors
             if sync_event is not None:
                 torch.cuda.current_stream().wait_event(sync_event)
+            # Slice to valid length (
+            cur_k = cur_k[:, :, :cur_len].contiguous()
+            cur_v = cur_v[:, :, :cur_len].contiguous()
+            cur_k, cur_v = cur_k.to(accum_dtype), cur_v.to(accum_dtype)
 
             cur_k, cur_v = cur_k.to(accum_dtype), cur_v.to(accum_dtype)
 

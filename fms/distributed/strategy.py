@@ -256,13 +256,15 @@ class RingAttentionStrategy(DistributedStrategy):
         If enable_timing=True, returns CUDA event for start time. End event is recorded in ring_shift_kv_wait.
         """
         # After iteration i, we receive from rank (self.rank - (i+1)) % world_size
-        recv_from = (self.rank - (iteration + 1)) % self.world_size
-        recv_len = self.block_lens[recv_from]
+        source_rank = (self.rank - (iteration + 1)) % self.world_size
+        recv_len = self.block_lens[source_rank]
 
         if self.world_size == 1:
             return None, k, v, recv_len, None
 
+        # Ring shift: always send to next, receive from previous
         send_to = (self.rank + 1) % self.world_size
+        recv_from = (self.rank - 1 + self.world_size) % self.world_size
         seq_dim = 2
 
         # Slice and pad KV to block_size
@@ -332,7 +334,7 @@ class RingAttentionStrategy(DistributedStrategy):
         # No synchronize() needed - recv_len is already known from block_lens
         if recv_len == 0:
             return recv_k[:, :, :0], recv_v[:, :, :0], 0, comm_end_event, sync_event
-        return recv_k[:, :, :recv_len].contiguous(), recv_v[:, :, :recv_len].contiguous(), recv_len, comm_end_event, sync_event
+        return recv_k, recv_v, recv_len, comm_end_event, sync_event
  
     @property
     def local_q_len(self) -> int:

@@ -151,13 +151,16 @@ def main():
 
     # Initialize distributed
     if world_size > 1 and args.device_type == "cuda":
+        print('multiple gpus found')
         torch.cuda.set_device(local_rank)
         if not dist.is_initialized():
+            print("stuck here?")
             dist.init_process_group(backend="nccl")
+            print("stuck here")
         device = torch.device("cuda", local_rank)
     else:
         device = torch.device(args.device_type)
-
+    print('hi')
     # Disable FlashAttention if requested (for fair comparison with ring attention)
     if args.disable_flash:
         torch.backends.cuda.enable_flash_sdp(False)

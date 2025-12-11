@@ -21,6 +21,10 @@ module load conda/latest
 conda activate context_parallelism
 module load cuda/12.6
 
+# export NCCL_P2P_DISABLE=1
+# export NCCL_IB_DISABLE=1
+export NCCL_DEBUG=INFO
+
 SUMMARY_CSV="$RESULTS_DIR/summary_${TIMESTAMP}.csv"
 LOG_FILE="$RESULTS_DIR/run_${TIMESTAMP}.log"
 
@@ -39,7 +43,7 @@ run_benchmark() {
       local num_tokens=$1
       local num_gpus=$2
 
-      PYTHONPATH="$SCRIPT_DIR/../:$PYTHONPATH" torchrun --nproc_per_node=$num_gpus --master_port=0 benchmark_ring.py \
+      PYTHONPATH="$SCRIPT_DIR/../:$PYTHONPATH" torchrun --nproc_per_node=$num_gpus benchmark_ring.py \
           --architecture llama \
           --variant 3.2-1b \
           --model_path "$MODEL_PATH" \

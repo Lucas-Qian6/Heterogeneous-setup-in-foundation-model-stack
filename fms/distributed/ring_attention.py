@@ -645,6 +645,13 @@ def _block_softmax_stats(
     mask: Optional[Tensor],
     causal: bool,
 ) -> Tuple[Tensor, Tensor, Tensor]:
+    # Triton path
+    if _HAS_TRITON and Q.is_cuda:
+        # Always use Triton path to prevent deadlock from divergent code paths on ranks
+        return block_softmax_stats_triton(
+            Q, K, V, query_indices, key_indices, scale, mask, causal
+        )
+
     # Fallback: pure PyTorch, correct but slower
     return _block_softmax_stats_naive(
         Q, K, V, query_indices, key_indices, scale, mask, causal

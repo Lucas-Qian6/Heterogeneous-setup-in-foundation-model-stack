@@ -221,7 +221,7 @@ def block_softmax_stats_triton(
         BLOCK_Q=block_q,
         BLOCK_K=block_k,
         num_warps=4,
-        num_stages=2,
+        num_stages=1,
     )
     print("heRE4")
     # add last dim for l/m to match [B,H,Q,1]

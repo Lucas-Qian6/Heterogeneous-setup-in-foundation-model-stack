@@ -18,7 +18,6 @@ from fms import distributed
 from fms.distributed.strategy import (
     TensorParallelStrategy,
     UniformModelParallelStrategy,
-    RingAttentionStrategy,
 )
 from fms.modules import UninitializedModule
 from fms.utils import gptq, serialization
@@ -411,12 +410,6 @@ def get_model(
             extra_args["distributed_strategy"] = UniformModelParallelStrategy(
                 devices, _guess_num_layers(lazy_sd)
             )
-        elif distributed_strategy == "ring":
-            print("using ring attention")
-            block_lens = kwargs.pop("block_lens", None)
-            if block_lens is None:
-                raise ValueError("block_lens required for ring attention strategy")
-            extra_args["distributed_strategy"] = RingAttentionStrategy(block_lens=block_lens,group=group)
 
     # Create the model on meta device to allocate weights lazily
     fms_model = _get_model_instance(

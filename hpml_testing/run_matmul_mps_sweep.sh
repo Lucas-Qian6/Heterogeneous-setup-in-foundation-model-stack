@@ -31,8 +31,6 @@ for pct in $MPS_PCTS; do
       continue
     fi
 
-    # Expected format: "     size |    dtype | bg_streams |     avg_ms |     TFLOPs"
-    # Use awk to extract fields by position.
     size_field=$(echo "$line" | awk '{print $1}')
     dtype_field=$(echo "$line" | awk '{print $3}')
     bg_field=$(echo "$line" | awk '{print $5}')

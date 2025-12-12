@@ -5,14 +5,12 @@ import pandas as pd
 import math
 import time
 
-# --- Configuration ---
 SEQLEN_SWEEP = [4096, 8192, 16384, 32768, 65536, 131072]
-SLOWDOWN_SWEEP = [80, 40, 20] # MPS percentage for the slower GPU
+SLOWDOWN_SWEEP = [80, 40, 20] 
 PERF_PROFILE_PATH = "hpml_testing/results/matmul_mps_sweep.csv"
 OUTPUT_CSV_PATH = "hpml_testing/results/sweep_results.csv"
 BENCHMARK_SCRIPT = "hpml_testing/benchmark_hetero_latency.py"
 
-# --- Helper Functions ---
 def parse_single_benchmark_output(output_string):
     """
     Parses the output of a single benchmark_hetero_latency.py execution (rank 0's output).
@@ -20,21 +18,11 @@ def parse_single_benchmark_output(output_string):
     """
     results = {}
 
-    # Example output:
-    # Running benchmark with 'even' split.
-    # Sequence Length: 8192, Block lengths: [4096, 4096]
-    # ...
-    # --- Results ---
-    # Rank 0 (4096 tokens): 87.45 ms
-    # Rank 1 (4096 tokens): 87.45 ms
-    # Overall Latency (max of ranks): 87.45 ms
-    # -----------------
-
     split_type_match = re.search(r"Running benchmark with '(\w+)' split.", output_string)
     if split_type_match:
         results['split_type'] = split_type_match.group(1)
     else:
-        results['split_type'] = "unknown" # Should not happen
+        results['split_type'] = "unknown" 
 
     seq_len_match = re.search(r"Sequence Length: (\d+), Block lengths: [^]]*]", output_string)
     if seq_len_match:
@@ -54,16 +42,13 @@ def parse_single_benchmark_output(output_string):
         
     return results
 
-# --- Main Sweep Logic ---
 def main():
     print("Starting benchmark sweep...")
     
-    # Set CUDA_VISIBLE_DEVICES to ensure consistency
     os.environ['CUDA_VISIBLE_DEVICES'] = '0,1'
 
     all_sweep_results = []
 
-    # Ensure python path includes current directory for fms imports
     os.environ['PYTHONPATH'] = os.getcwd() + ':' + os.environ.get('PYTHONPATH', '')
 
     try:
@@ -72,7 +57,6 @@ def main():
                 print(f"\n--- Running: SEQ_LEN={seq_len}, SLOWDOWN_PCT={slowdown_pct} ---")
                 current_slowdown_factor = slowdown_pct / 100.0
 
-                # --- Run Even Split ---
                 print("Running Even Split...")
                 p0_even = subprocess.Popen(
                     ["python3", BENCHMARK_SCRIPT, 
@@ -90,7 +74,7 @@ def main():
                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
                 )
                 stdout_even_rank0, stderr_even_rank0 = p0_even.communicate()
-                _, stderr_even_rank1 = p1_even.communicate() # Only need rank0 output for summary
+                _, stderr_even_rank1 = p1_even.communicate() 
                 
                 if p0_even.returncode != 0:
                     print(f"Error in even split (rank 0): {stderr_even_rank0}")
@@ -101,12 +85,11 @@ def main():
                 even_results.update({
                     "seq_len": seq_len,
                     "slowdown_pct": slowdown_pct,
-                    "split_type": "even", # Override parsed to ensure consistency
+                    "split_type": "even", 
                 })
                 all_sweep_results.append(even_results)
 
 
-                # --- Run Uneven Split ---
                 print("Running Uneven Split (factor-based)...")
                 p0_uneven = subprocess.Popen(
                     ["python3", BENCHMARK_SCRIPT, 
@@ -140,7 +123,6 @@ def main():
                 all_sweep_results.append(uneven_results)
 
 
-                # --- Run LUT Split ---
                 print("Running LUT Split...")
                 p0_lut = subprocess.Popen(
                     ["python3", BENCHMARK_SCRIPT, 
@@ -177,6 +159,40 @@ def main():
                 })
                 all_sweep_results.append(lut_results)
                 
+
+                # --- Run Homogeneous Reference Split ---
+                print("Running Homogeneous Reference Split...")
+                p0_ref = subprocess.Popen(
+                    ["python3", BENCHMARK_SCRIPT, 
+                     "--rank", "0", "--world-size", "2", 
+                     "--seq-len", str(seq_len), "--emb-dim", "4096", "--n-heads", "32", 
+                     "--split-type", "even"],
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+                )
+                p1_ref = subprocess.Popen(
+                    ["python3", BENCHMARK_SCRIPT, 
+                     "--rank", "1", "--world-size", "2", 
+                     "--seq-len", str(seq_len), "--emb-dim", "4096", "--n-heads", "32", 
+                     "--split-type", "even"],
+                    # NOTE: No MPS slowdown applied to either rank for the reference case
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+                )
+                stdout_ref_rank0, stderr_ref_rank0 = p0_ref.communicate()
+                _, stderr_ref_rank1 = p1_ref.communicate()
+
+                if p0_ref.returncode != 0:
+                    print(f"Error in reference split (rank 0): {stderr_ref_rank0}")
+                if p1_ref.returncode != 0:
+                    print(f"Error in reference split (rank 1): {stderr_ref_rank1}")
+
+                ref_results = parse_single_benchmark_output(stdout_ref_rank0)
+                ref_results.update({
+                    "seq_len": seq_len,
+                    "slowdown_pct": slowdown_pct, # Keep for grouping, though it's not applied
+                    "split_type": "reference_homogeneous",
+                })
+                all_sweep_results.append(ref_results)
+
                 time.sleep(1) # Small pause between configurations
                 
     except Exception as e:

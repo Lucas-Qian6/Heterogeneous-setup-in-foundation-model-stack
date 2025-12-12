@@ -11,7 +11,7 @@ SEQ_LEN=${SEQ_LEN:-8192}
 NUM_DECODE_TOKENS=${NUM_DECODE_TOKENS:-32}
 BATCH_SIZE=${BATCH_SIZE:-1}
 ARCH="llama"
-VARIANT="8b"
+VARIANT="3.2-1b"
 MODEL_PATH=MODEL_PATH="/datasets/ai/llama3/hub/models--meta-llama--Llama-3.2-1B/snapshots/4e20de362430cd3b72f300e6b0f18e50e7166e08"   # <-- change if needed
 
 export WORLD_SIZE=2

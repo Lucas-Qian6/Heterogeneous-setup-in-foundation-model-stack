@@ -6,7 +6,7 @@
 
 # --- Parameters ---
 SLOWDOWN_PERCENTAGE=50
-SLOWDOWN_FACTOR=$(echo "$SLOWDOWN_PERCENTAGE / 100" | bc -l)
+SLOWDOWN_FACTOR=$(awk "BEGIN {print $SLOWDOWN_PERCENTAGE/100}")
 RESULTS_DIR="hpml_testing/results"
 
 # --- Script setup ---

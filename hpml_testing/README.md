@@ -13,19 +13,61 @@
 -   **Command**: `bash hpml_testing/run_matmul_mps_sweep.sh`
 
 ### `run_hetero_benchmark.sh`
--   Runs a single, quick comparison of the three rebalancing strategies for the one configuration set at the top of the script.
+
+-   **What it does**: Runs a single, quick comparison of the three rebalancing strategies for the one configuration set at the top of the script.
+
 -   **Command**: `bash hpml_testing/run_hetero_benchmark.sh`
+
+
+
+### `profile_rebalancing.py`
+
+-   **What it does**: Runs a single benchmark configuration under the PyTorch Profiler, saving a detailed trace file for each GPU.
+
+-   **Command**: This script is typically called by `run_profiling_comparison.sh` but can be run directly.
+
+
+
+### `run_profiling_comparison.sh`
+
+-   **What it does**: Orchestrates the profiling of the `even`, `uneven`, and `lut` strategies, generating trace files for each rank.
+
+-   **Command**: `bash hpml_testing/run_profiling_comparison.sh`
+
+
+
+### `analyze_profiles.py`
+
+-   **What it does**: Parses the generated PyTorch profiler trace files and prints a summary table of `comm_wait` and `compute_block` durations for each strategy and rank.
+
+-   **Command**: `python3 hpml_testing/analyze_profiles.py`
+
+
 
 ---
 
+
+
 ## Prerequisites
 
+
+
 1.  **Python Libraries**:
+
     ```bash
-    pip install pandas matplotlib seaborn
+
+    pip install pandas matplotlib seaborn tabulate
+
     ```
+
 2.  **CUDA MPS Daemon**: The benchmark requires the NVIDIA MPS daemon to be active to simulate a heterogeneous setup.
+
     ```bash
+
     # Start the daemon before running any benchmarks
+
     sudo nvidia-cuda-mps-control -d
+
     ```
+
+

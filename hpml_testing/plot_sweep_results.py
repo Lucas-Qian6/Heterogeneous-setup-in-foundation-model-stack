@@ -63,7 +63,7 @@ def create_plots(csv_path):
         kind="line",
         height=5,
         aspect=1.2,
-        sharey=False,
+        facet_kws={'sharey': False}, # Fix: moved sharey here
         legend="full",
         markers=True,
         dashes=False

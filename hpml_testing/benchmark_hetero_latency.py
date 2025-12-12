@@ -106,6 +106,36 @@ def load_performance_profile(profile_path, size):
         
     return df_filtered.set_index('mps_pct')['tflops'].to_dict()
 
+def get_performance_for_mps(profile, mps_pct):
+    """Gets the performance for a given MPS percentage, using linear interpolation if needed."""
+    
+    # Sort the profile keys to allow for interpolation
+    sorted_mps = sorted(profile.keys())
+    
+    if mps_pct in profile:
+        return profile[mps_pct]
+    
+    # Handle edge cases: clamp to min/max if outside the range
+    if mps_pct > sorted_mps[-1]:
+        return profile[sorted_mps[-1]]
+    if mps_pct < sorted_mps[0]:
+        return profile[sorted_mps[0]]
+        
+    # Find bracketing values
+    for i, p in enumerate(sorted_mps):
+        if p > mps_pct:
+            high_p = p
+            low_p = sorted_mps[i-1]
+            break
+            
+    # Linear interpolation
+    high_val = profile[high_p]
+    low_val = profile[low_p]
+    
+    weight = (mps_pct - low_p) / (high_p - low_p)
+    
+    return low_val + weight * (high_val - low_val)
+
 def main():
     parser = argparse.ArgumentParser(description="Heterogeneous Ring Attention Benchmark")
     parser.add_argument("--rank", type=int, required=True, help="Rank of the process")
@@ -160,7 +190,7 @@ def main():
         if len(rank_mps_list) != args.world_size:
             raise ValueError("Number of MPS percentages must match world size.")
             
-        weights = [perf_profile[mps] for mps in rank_mps_list]
+        weights = [get_performance_for_mps(perf_profile, mps) for mps in rank_mps_list]
         total_weight = sum(weights)
 
         block_lens = []

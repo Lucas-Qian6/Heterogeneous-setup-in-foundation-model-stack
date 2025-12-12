@@ -68,12 +68,9 @@ def create_plots(csv_path):
         markers=True,
         dashes=False
     )
-    g_line.fig.suptitle("Latency Trend by Sequence Length and Slowdown", y=1.03)
-    g_line.set_axis_labels("Slowdown Percentage for Rank 1", "Overall Latency (ms)")
-    g_line.set_titles("Sequence Length: {col_name}")
-    g_line.set(xdir="reverse") # Show slowdown getting worse from left to right
     g_line.despine(left=True)
     for ax in g_line.axes.flat:
+        ax.invert_xaxis() # Show slowdown getting worse from left to right
         ax.set_yscale('log') # Use log scale
         ax.grid(axis='y', linestyle='--', alpha=0.7)
         ax.grid(axis='x', linestyle='--', alpha=0.5)

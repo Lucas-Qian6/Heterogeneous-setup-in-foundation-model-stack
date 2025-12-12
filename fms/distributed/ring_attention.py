@@ -9,7 +9,8 @@ from fms.modules.attention import MultiHeadAttention
 from fms.distributed.strategy import DistributedStrategy, RingAttentionStrategy
 
 # Use Triton only when block size is big enough (Q_len*K_len)
-_TRITON_MIN_WORK = 4096000000000  # or 16384, tune based on your profiling
+_TRITON_MIN_WORK = 2048
+# 4096000000000  # or 16384, tune based on your profiling
 
 try:
     from .triton_offdiag_block import block_softmax_stats_triton

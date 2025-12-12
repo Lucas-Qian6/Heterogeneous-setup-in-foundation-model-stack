@@ -1,19 +1,4 @@
 #!/usr/bin/env bash
-#
-# Sweep single-GPU matmul performance across matrix sizes and MPS throttling.
-# Requires CUDA and the benchmark at hpml_testing/benchmark_single_gpu_matmul.py.
-
-set -euo pipefail
-
-# Configurable via environment:
-#   SIZES: space-separated square sizes (e.g., "2048 4096 8192")
-#   MPS_PCTS: space-separated MPS percentages (e.g., "100 80 60 40 20")
-#   DTYPE: matmul dtype (float16 | bfloat16 | float32)
-#   NUM_ITERS: timed iterations per run
-#   WARMUP_ITERS: warmup iterations per run
-#   BG_STREAMS: background streams to add contention
-#   OUT_CSV: output CSV path
-
 SIZES=${SIZES:-"64 128 256 512 1024 2048 4096 8192 16384 32768"}
 MPS_PCTS=${MPS_PCTS:-"100 80 60 40 20 15 10 5 2.5 1"}
 DTYPE=${DTYPE:-float16}

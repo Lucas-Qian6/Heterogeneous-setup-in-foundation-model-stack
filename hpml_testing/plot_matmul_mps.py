@@ -5,6 +5,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import os # Added import for os
 
+plt.rcParams.update({'font.size': 14})
+
 OUTPUT_DIR = "hpml_testing/plots" # Define the output directory globally
 
 def main() -> None:
@@ -59,7 +61,7 @@ def main() -> None:
     plt.xlabel("Matrix Size (N)")
     plt.ylabel("Latency (ms)")
     plt.title("Matmul Latency vs Size (Log-Log)")
-    plt.legend(bbox_to_anchor=(1.02, 1), loc="upper left")
+    plt.legend(loc="upper left")
     plt.grid(True, which="both", linestyle="--", alpha=0.5)
     plt.tight_layout()
     
@@ -95,7 +97,7 @@ def main() -> None:
     plt.xlabel("MPS Percentage (Log Scale)")
     plt.ylabel("Normalized Performance")
     plt.title("Performance Scaling vs MPS Percentage scaling")
-    plt.legend(bbox_to_anchor=(1.02, 1), loc="upper left")
+    plt.legend(loc="lower right")
     plt.grid(True, which="both", linestyle="--", alpha=0.5)
     
     # Custom ticks for readability on log axes

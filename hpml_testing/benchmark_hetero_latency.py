@@ -10,6 +10,7 @@ from fms.distributed.strategy import RingAttentionStrategy
 from fms.modules.attention import MultiHeadAttention
 from fms.modules.positions import RotaryEmbedding
 from fms.distributed.ring_attention import _ring_attention_pass_kv, reset_layer_counter
+from empirical_normalized_perf import empirical_normalized_perf
 
 def setup_distributed(rank, world_size):
     """Initializes torch.distributed."""
@@ -151,7 +152,7 @@ def main():
     parser.add_argument("--n-heads", type=int, default=32, help="Number of attention heads")
     parser.add_argument("--emb-dim", type=int, default=4096, help="Embedding dimension")
     parser.add_argument("--n-steps", type=int, default=20, help="Number of benchmark iterations")
-    parser.add_argument("--split-type", type=str, choices=["even", "uneven", "lut"], default="even", help="Workload split type")
+    parser.add_argument("--split-type", type=str, choices=["even", "uneven", "lut", "formula"], default="even", help="Workload split type")
     parser.add_argument("--slowdown-factor", type=float, default=0.5, help="Proportional slowdown of the weak GPU (e.g., 0.5 for 50%)")
     parser.add_argument("--use-perf-profile", type=str, default=None, help="Path to the performance profile CSV file.")
     parser.add_argument("--rank-mps", type=str, default="100,50", help="Comma-separated list of MPS percentages for each rank.")
@@ -179,26 +180,26 @@ def main():
         
         diff = sum(block_lens) - args.seq_len
         block_lens[-1] -= diff
-    elif args.split_type == "lut":
-        if not args.use_perf_profile:
-            raise ValueError("Performance profile must be specified for 'lut' split type.")
-        
-        perf_profile, metric_type = load_performance_profile(args.use_perf_profile, args.seq_len)
-        
+    elif args.split_type == "lut" or args.split_type == "formula":
         rank_mps_list = [float(p) for p in args.rank_mps.split(',')]
-        
         if len(rank_mps_list) != args.world_size:
             raise ValueError("Number of MPS percentages must match world size.")
-        
-        raw_perf = [get_performance_for_mps(perf_profile, mps) for mps in rank_mps_list]
-        
-        if metric_type == 'latency':
-            # Lower latency is better, so weight is inverse of performance
-            weights = [1 / p for p in raw_perf]
-        else: # tflops
-            # Higher tflops is better, so weight is direct performance
-            weights = raw_perf
+
+        weights = []
+        if args.split_type == "lut":
+            if not args.use_perf_profile:
+                raise ValueError("Performance profile must be specified for 'lut' split type.")
             
+            perf_profile, metric_type = load_performance_profile(args.use_perf_profile, args.seq_len)
+            raw_perf = [get_performance_for_mps(perf_profile, mps) for mps in rank_mps_list]
+            
+            if metric_type == 'latency':
+                weights = [1 / p for p in raw_perf]
+            else: # tflops
+                weights = raw_perf
+        else: # formula
+            weights = [empirical_normalized_perf(args.seq_len, mps) for mps in rank_mps_list]
+
         total_weight = sum(weights)
 
         block_lens = []

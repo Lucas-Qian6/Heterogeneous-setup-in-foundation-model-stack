@@ -35,11 +35,12 @@ def create_plots(csv_path):
     pivot_df['even_slowdown'] = pivot_df['even'] / pivot_df['reference_homogeneous']
     pivot_df['uneven_slowdown'] = pivot_df['uneven'] / pivot_df['reference_homogeneous']
     pivot_df['lut_slowdown'] = pivot_df['lut'] / pivot_df['reference_homogeneous']
+    pivot_df['formula_slowdown'] = pivot_df['formula'] / pivot_df['reference_homogeneous']
 
     # Melt the DataFrame back into a long format for plotting
     slowdown_df = pivot_df.melt(
         id_vars=['seq_len', 'slowdown_pct'],
-        value_vars=['even_slowdown', 'uneven_slowdown', 'lut_slowdown'],
+        value_vars=['even_slowdown', 'uneven_slowdown', 'lut_slowdown', 'formula_slowdown'],
         var_name='split_type',
         value_name='slowdown'
     )

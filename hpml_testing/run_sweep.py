@@ -170,6 +170,42 @@ def main():
                     "split_type": "lut",
                 })
                 all_sweep_results.append(lut_results)
+
+
+                # --- Run Formula Split ---
+                print("Running Formula Split...")
+                p0_formula = subprocess.Popen(
+                    ["python3", BENCHMARK_SCRIPT,
+                     "--rank", "0", "--world-size", "2",
+                     "--seq-len", str(seq_len), "--emb-dim", "4096", "--n-heads", "32",
+                     "--split-type", "formula",
+                     "--rank-mps", f"100,{slowdown_pct}"],
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+                )
+                p1_formula = subprocess.Popen(
+                    ["python3", BENCHMARK_SCRIPT,
+                     "--rank", "1", "--world-size", "2",
+                     "--seq-len", str(seq_len), "--emb-dim", "4096", "--n-heads", "32",
+                     "--split-type", "formula",
+                     "--rank-mps", f"100,{slowdown_pct}"],
+                    env={**os.environ, "CUDA_MPS_ACTIVE_THREAD_PERCENTAGE": str(slowdown_pct)},
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+                )
+                stdout_formula_rank0, stderr_formula_rank0 = p0_formula.communicate()
+                _, stderr_formula_rank1 = p1_formula.communicate()
+
+                if p0_formula.returncode != 0:
+                    print(f"Error in formula split (rank 0): {stderr_formula_rank0}")
+                if p1_formula.returncode != 0:
+                    print(f"Error in formula split (rank 1): {stderr_formula_rank1}")
+
+                formula_results = parse_single_benchmark_output(stdout_formula_rank0)
+                formula_results.update({
+                    "seq_len": seq_len,
+                    "slowdown_pct": slowdown_pct,
+                    "split_type": "formula",
+                })
+                all_sweep_results.append(formula_results)
                 
 
                 # --- Run Homogeneous Reference Split ---

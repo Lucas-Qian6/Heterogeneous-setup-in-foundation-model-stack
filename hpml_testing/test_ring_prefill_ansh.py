@@ -1,10 +1,5 @@
 """
 Test for ring attention prefill (pass-KV) with async overlap.
-
-This script is benchmarked by a launcher script that sets up the distributed
-environment and throttling.
-
-Run via a launcher script like `run_manual_benchmark.sh`.
 """
 import os
 import torch

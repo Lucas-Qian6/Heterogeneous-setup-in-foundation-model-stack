@@ -8,7 +8,7 @@ import plotly.graph_objects as go
 # CONFIG
 # ============================================================
 CSV_PATH = "./results/matmul_mps_sweep.csv"
-POLY_DEGREE = 2   # recommended; higher degrees overfit badly
+POLY_DEGREE = 2   
 
 # ============================================================
 # LOAD DATA

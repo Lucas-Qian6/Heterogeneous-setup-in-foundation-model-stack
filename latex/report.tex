@@ -68,24 +68,147 @@ We introduce a new RingAttentionStrategy, which exposes a block\_lens argument t
 The core of the implementation is a pass-KV ring attention kernel in which queries remain local while keys and values are rotated around the ring. The kernel uses an online softmax formulation, allowing us to accumulate attention outputs across KV blocks without materializing the full attention matrix.
 
 \subsection{Optimization Procedure}
-\subsection{Profiling tools and methods}
+Given a heterogeneous ring where rank capabilities differ, the key challenge is determining how to partition the sequence across ranks. We investigate four partitioning strategies that vary in complexity and information requirements.
+
+\textbf{Even Split (Baseline).} The standard approach assigns an equal number of tokens to each rank: $n_i = N / P$ for all ranks $i$, where $N$ is the total sequence length and $P$ is the number of ranks. This strategy is optimal when all ranks have identical performance but becomes suboptimal when heterogeneity is present.
+
+\textbf{Uneven Split.} When the relative performance of each rank is known (e.g., through MPS percentage or hardware specifications), tokens can be distributed proportionally. For a two-rank system with rank 0 at full capacity and rank 1 throttled to $s\%$ of full performance, we assign:
+\begin{equation}
+n_0 = N \cdot \frac{1}{1 + s}, \quad n_1 = N \cdot \frac{s}{1 + s}
+\end{equation}
+This ensures that both ranks complete their workload in approximately the same time, minimizing idle cycles.
+
+\textbf{LUT Split.} Rather than assuming a linear relationship between MPS percentage and performance, we construct a lookup table (LUT) from offline profiling. For each combination of sequence length and MPS setting, we measure actual execution time and use these measurements to derive optimal token allocations. This approach captures non-linear effects that the simple proportional model may miss.
+
+\textbf{Formula Split.} We fit a polynomial regression model to the profiling data, yielding a closed-form expression for predicted performance as a function of sequence length and MPS percentage. The fitted model achieves $R^2 = 0.922$ and allows token allocation without requiring a full lookup table.
+
+Figure~\ref{fig:token_dist} illustrates how these strategies redistribute tokens across ranks as heterogeneity increases. At mild heterogeneity (90\% MPS), all strategies produce similar allocations. At severe heterogeneity (10\% MPS), the adaptive strategies shift substantially more tokens to the faster rank.
+
+\begin{figure}[htbp]
+\centerline{\includegraphics[width=\columnwidth]{images/token_distribution.png}}
+\caption{Token distribution across GPUs under different partitioning strategies. As heterogeneity increases (lower MPS), adaptive strategies assign more tokens to the faster GPU to balance execution time.}
+\label{fig:token_dist}
+\end{figure}
+
+\subsection{Profiling Tools and Methods}
+To simulate heterogeneous GPU performance within a homogeneous cluster, we use NVIDIA's Multi-Process Service (MPS) to throttle individual GPUs to a fraction of their full compute capacity. MPS allows multiple processes to share a GPU and, critically, enables limiting the percentage of SM (Streaming Multiprocessor) resources available to each process. By setting MPS active thread percentage to values between 10\% and 100\%, we can emulate GPUs with varying compute capabilities.
+
+We first characterize the relationship between MPS throttling and actual compute performance through microbenchmarks. Figure~\ref{fig:matmul_latency} shows matrix multiplication latency across different matrix sizes and MPS settings. The results confirm that MPS throttling produces predictable performance degradation that scales with problem size.
+
+\begin{figure}[htbp]
+\centerline{\includegraphics[width=\columnwidth]{images/matmul_mps_sweep.graph1_latency.png}}
+\caption{Matrix multiplication latency as a function of matrix size under different MPS throttling levels. Lower MPS percentages result in proportionally higher latency for compute-bound operations.}
+\label{fig:matmul_latency}
+\end{figure}
+
+Figure~\ref{fig:perf_scaling} shows normalized performance (relative to 100\% MPS) across different MPS settings and sequence lengths. 
+
+\begin{figure}[htbp]
+\centerline{\includegraphics[width=\columnwidth]{images/performance_scaling_vs_mps_percentage.png}}
+\caption{Normalized performance scaling with MPS percentage. Performance scales approximately linearly with MPS allocation, enabling predictable modeling of heterogeneous configurations.}
+\label{fig:perf_scaling}
+\end{figure}
+
+To enable the formula-based partitioning strategy, we fit a degree-2 polynomial regression model to the profiling data. The model takes sequence length and MPS percentage as inputs and predicts normalized performance. Figure~\ref{fig:regression} shows the fitted regression surface, which achieves $R^2 = 0.922$ on the training data.
+
+\begin{figure}[htbp]
+\centerline{\includegraphics[width=\columnwidth]{images/regression_results.png}}
+\caption{Polynomial regression surface for performance prediction. The model captures the joint dependence on sequence length and MPS percentage with $R^2 = 0.922$.}
+\label{fig:regression}
+\end{figure}
+
 \subsection{Evaluation Metrics}
+We evaluate partitioning strategies using the following metrics:
+
+\textbf{Prefill latency.} The wall-clock time for the attention layer to complete across all ranks, determined by the slowest rank. Since ring attention requires synchronization between ranks, overall latency is bounded by the straggler.
+
+\textbf{Slowdown factor.} The ratio of heterogeneous execution time to homogeneous baseline execution time: $\text{Slowdown} = T_{hetero} / T_{homo}$. A slowdown of 1.0 indicates no performance loss from heterogeneity.
+
+\textbf{Efficiency.} The inverse of slowdown, expressed as a percentage: $\text{Efficiency} = (T_{homo} / T_{hetero}) \times 100\%$. This measures how much of the ideal (homogeneous) performance is retained.
+
+\textbf{Speedup over baseline.} The ratio of even-split latency to adaptive-strategy latency: $\text{Speedup} = T_{even} / T_{adaptive}$. This quantifies the improvement from using heterogeneity-aware partitioning.
 
 \section{Experimental Results}
 
 \subsection{Experimental Setup}
-\subsection{ Performance Comparison}
+All experiments are conducted on a single node equipped with two NVIDIA L40 GPUs. We use IBM's Foundation Model Stack with our modified RingAttentionStrategy implementation.
+
+To simulate heterogeneity, we run rank 0 at 100\% MPS and vary rank 1's MPS allocation from 10\% to 90\% in increments of 10\%. This creates heterogeneity ratios ranging from 1.1:1 (mild) to 10:1 (severe). We sweep sequence lengths from 4,096 to 65,536 tokens, covering the range relevant to long-context inference workloads.
+
+Each configuration is run 5 times after a warmup pass, and we report the median latency. The reference homogeneous baseline runs both ranks at 100\% MPS with even partitioning.
+
+\subsection{Performance Comparison}
+Figure~\ref{fig:strategy_eval} presents the main experimental results, showing slowdown factor relative to the homogeneous baseline across all sequence lengths and MPS configurations. Several patterns emerge from these results.
+
+\begin{figure*}[htbp]
+\centerline{\includegraphics[width=\textwidth]{images/strtategy_eval.png}}
+\caption{Slowdown factor for each partitioning strategy across sequence lengths and MPS configurations. Lower values indicate better performance. The dashed red line at 1.0 represents ideal (homogeneous) performance. Asterisks mark the best-performing strategy for each configuration.}
+\label{fig:strategy_eval}
+\end{figure*}
+
+First, even split performance degrades rapidly as heterogeneity increases. At 10\% MPS, the even split strategy exhibits slowdowns of 5-8x across all sequence lengths, as the faster rank spends most of its time waiting for the throttled rank to complete.
+
+Second, the adaptive strategies substantially reduce this slowdown. The uneven split strategy consistently achieves the best or near-best performance across configurations. At extreme heterogeneity (10\% MPS), uneven split reduces slowdown from 5-8x to approximately 2x, recovering a significant portion of the lost performance.
+
+Third, the relative effectiveness of LUT and formula strategies varies with configuration. LUT split performs well at moderate heterogeneity but sometimes underperforms at extremes, likely due to interpolation artifacts in the lookup table. Formula split provides consistent middle-ground performance but rarely achieves the best results.
+
+Figure~\ref{fig:heatmap} provides an alternative view of these results, showing the speedup of uneven split over even split as a heatmap. The speedup increases with both sequence length and heterogeneity, reaching 4.4x at 65K tokens with 10\% MPS.
+
+\begin{figure}[htbp]
+\centerline{\includegraphics[width=\columnwidth]{images/speedup_heatmap.png}}
+\caption{Speedup of uneven split over even split. Darker green indicates larger improvements. The greatest benefits occur at high heterogeneity (low MPS) and long sequences.}
+\label{fig:heatmap}
+\end{figure}
+
+Figure~\ref{fig:extreme} shows absolute latency at the most extreme heterogeneity setting (10\% MPS). The difference between strategies is most pronounced here: even split requires over 6 seconds for 65K tokens, while uneven split completes in under 1.4 seconds.
+
+\begin{figure}[htbp]
+\centerline{\includegraphics[width=\columnwidth]{images/extreme_heterogeneity.png}}
+\caption{Absolute latency at 10\% MPS (extreme heterogeneity). Adaptive strategies reduce latency by up to 4.4x compared to even split.}
+\label{fig:extreme}
+\end{figure}
 
 \section{Discussion}
 \subsection{Interpretation of Results}
+The experimental results confirm that heterogeneity-aware partitioning can recover substantial performance in ring attention under heterogeneous conditions. The key insight is that the straggler effect in synchronous distributed execution can be mitigated by reducing the workload assigned to slower ranks.
+
+Figure~\ref{fig:efficiency} shows efficiency (relative to homogeneous baseline) across MPS configurations. Even split efficiency drops below 20\% at severe heterogeneity, meaning over 80\% of potential performance is lost to waiting. The adaptive strategies maintain 40-50\% efficiency even at 10\% MPS, representing a 2-3x improvement in resource utilization.
+
+\begin{figure}[htbp]
+\centerline{\includegraphics[width=\columnwidth]{images/efficiency_vs_heterogeneity.png}}
+\caption{Efficiency relative to homogeneous baseline. Adaptive strategies maintain substantially higher efficiency as heterogeneity increases.}
+\label{fig:efficiency}
+\end{figure}
+
+The uneven split strategy's consistent strong performance suggests that a simple proportional allocation based on known rank capabilities is sufficient for most scenarios. The additional complexity of LUT or formula-based approaches provides marginal benefit and may introduce brittleness when the profiling conditions do not match runtime conditions.
+
 \subsection{Comparison with Previous Studies}
+Prior work on context parallelism, including the original ring attention paper and IBM's FMS implementation, focused exclusively on homogeneous configurations. To our knowledge, this is the first systematic study of ring attention performance under controlled heterogeneity. Our results demonstrate that the implicit homogeneity assumption in existing implementations leads to severe performance degradation when violated, and that simple modifications to the partitioning strategy can largely recover the lost performance.
+
 \subsection{Challenges and Limitations}
+Several limitations affect the generalizability of our results. First, we simulate heterogeneity using MPS throttling rather than actual mixed hardware. While MPS provides controllable and reproducible heterogeneity, real mixed-GPU deployments may exhibit different performance characteristics, particularly in communication patterns.
+
+Second, our experiments use a two-rank configuration. Scaling to larger rings introduces additional complexity, as the optimal partitioning must account for multiple heterogeneous ranks simultaneously. The proportional allocation approach extends naturally, but the interaction effects may differ.
+
+Third, we focus on the prefill (prompt processing) phase of inference. The decode phase, which generates tokens autoregressively, has different computational characteristics and may respond differently to heterogeneous partitioning.
+
 \subsection{Future Directions}
+Several directions merit further investigation. Dynamic rebalancing during execution could adapt to runtime performance variations rather than relying on static profiling. Integration with other parallelism strategies (tensor parallelism, pipeline parallelism) would enable heterogeneity-aware partitioning in more complex deployment configurations. Finally, extending the approach to actual mixed-hardware deployments would validate the practical applicability of our methodology.
 
 \section{Conclusion}
 \subsection{Summary of Findings}
+We investigated the impact of GPU heterogeneity on ring attention performance and proposed partitioning strategies to mitigate the resulting slowdown. Our experiments demonstrate that:
+\begin{itemize}
+\item Standard even partitioning causes severe performance degradation under heterogeneity, with slowdowns exceeding 5x at 10:1 capability ratios.
+\item Simple proportional partitioning (uneven split) recovers most of the lost performance, achieving up to 4.4x speedup over even split.
+\item More complex strategies (LUT, formula) provide marginal additional benefit and may introduce brittleness.
+\end{itemize}
+
 \subsection{Contributions}
+This work makes three contributions. First, we quantify the performance impact of heterogeneity in ring attention, establishing that the straggler effect causes substantial slowdown even at moderate capability differences. Second, we propose and evaluate multiple partitioning strategies for heterogeneous rings, identifying proportional allocation as an effective and practical approach. Third, we provide an open-source implementation of heterogeneity-aware ring attention in IBM's FMS framework.
+
 \subsection{Recommendations for Future Research}
+Based on our findings, we recommend that distributed inference frameworks incorporate heterogeneity-aware partitioning as a first-class feature. The simplicity and effectiveness of proportional allocation makes it a low-cost addition to existing implementations. Future work should extend these techniques to multi-node deployments and investigate dynamic adaptation to runtime performance variations.
 
 \bibliographystyle{IEEEtran}
 \bibliography{ref}

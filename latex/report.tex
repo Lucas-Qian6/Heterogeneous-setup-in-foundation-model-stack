@@ -1,0 +1,93 @@
+\documentclass[conference]{IEEEtran}
+\IEEEoverridecommandlockouts
+% The preceding line is only needed to identify funding in the first footnote. If that is unneeded, please comment it out.
+\usepackage{cite}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{algorithmic}
+\usepackage{graphicx}
+\usepackage{textcomp}
+\usepackage{xcolor}
+\def\BibTeX{{\rm B\kern-.05em{\sc i\kern-.025em b}\kern-.08em
+    T\kern-.1667em\lower.7ex\hbox{E}\kern-.125emX}}
+\begin{document}
+
+\title{Heterogeneity-Aware Context Parallelism in Ring Attention}
+
+\author{
+    \IEEEauthorblockN{
+        William Baisi,
+        Yujun Qian,
+        Kanghyuk Lee,
+        Anshul Sadh-Gauri
+    }
+    \IEEEauthorblockA{
+        Computer Science Department, Columbia University, New York, USA, \{wb2426, yq2432, as7798, kl3768\}@columbia.edu
+    }
+}
+
+\maketitle
+
+\begin{abstract}
+The rapid adoption of large language models (LLMs) has made inference as a service a dominant deployment paradigm, yet the quadratic memory growth of self-attention remains a major barrier to scalability. Techniques such as FlashAttention and distributed methods like Ring Attention alleviate memory pressure by partitioning computation and data, but they typically assume homogeneous hardware. In this work, we study intra-node heterogeneity, where different ranks have unequal performance, either due to partial hardware upgrades driven by cost constraints or because one or more ranks are degraded or throttled. We first quantify the slowdown that heterogeneity introduces in ring attention execution, where performance is highly sensitive to load balance. We then propose a load-balancing methodology that explicitly accounts for rank capabilities to mitigate this slowdown and improve end-to-end inference performance.
+\end{abstract}
+
+\begin{IEEEkeywords}
+Distributed Inference, Heterogeneous Computing, Large Language Models (LLMs), Ring Attention, and Scalability. 
+\end{IEEEkeywords}
+
+\section{Introduction}
+\subsection{Background and Motivation}
+The rapid adoption of large language models (LLMs) has accelerated the rise of inference as a service, a paradigm in which user queries are offloaded to data centers. Transformers are the backbone of the success of these models, but their scalability poses significant challenges. In particular, the memory footprint of the self-attention mechanism \cite{attn_is_all} grows quadratically with sequence length. This limitation has motivated new research directions: techniques such as FlashAttention\cite{dao2022flashattentionfastmemoryefficientexact}, which avoid materializing the entire attention matrix by processing it in tiles combined with online softmax computation\cite{rabe2022selfattentiondoesneedon2, liu2023blockwiseparalleltransformerlarge}, and distributed execution approaches such as ring attention\cite{liu2023ringattentionblockwisetransformers}, where workloads are partitioned across multiple nodes to overcome per-node memory constraints.
+
+While many modern datacenters are still largely homogeneous clusters, it is plausible that they will become increasingly heterogeneous over time. Incremental upgrades under tight economic constraints, occasional node replacement after hardware failures, or the introduction of specialized accelerators could all gradually lead to a mix of hardware generations and capabilities within the same deployment. This heterogeneity could creates bottlenecks in synchronous distributed execution, where the overall performance is constrained by the slowest participant. 
+
+
+%Previous work on IBM’s Foundation Model Stack (FMS) implemented context parallelism using Ring Attention\cite{IBM_FMS_RingAttention}, demonstrating that distributing the Key-Value (KV) cache approach could extend sequence lengths well beyond the single-GPU limit while maintaining correctness. Their experiments on L40S GPUs demonstrated near-linear scaling of inference latency with increasing context length.
+
+\subsection{Problem Statement}
+Current implementations of Context Parallelism, including Ring Attention, implicitly assume a symmetric hardware topology. Consequently, standard partitioning strategies distribute the Key-Value (KV) cache uniformly, assigning an equal number of tokens to every rank in the process group ($N_{tokens} / P_{ranks}$). While optimal for homogeneous clusters, this rigid partitioning becomes a critical bottleneck in heterogeneous environments.
+
+The core issue stems from the synchronous nature of the Ring Attention algorithm. In each step of the ring, computation (Attention calculation) and communication (P2P block transfer) are overlapped, but the transition to the next step requires a global synchronization barrier or implicit data dependency. In a cluster containing mixed accelerators (e.g., combining NVIDIA H100s with A100s), a uniform workload results in disparate execution times across ranks.
+
+Specifically, higher-performance nodes complete their attention sub-problems rapidly and become idle, forced to wait for the slowest node (the \textit{straggler}) to complete its computation or transmission. This "straggler effect" causes the aggregate system throughput to collapse to the speed of the weakest device multiplied by the number of nodes. As a result, the superior compute throughput and memory bandwidth of modern accelerators in the ring are wasted, and the latency of end-to-end inference remains unacceptably high despite the presence of capable hardware.
+
+\subsection{Objectives and Scope}
+Building on this prior work, our project seeks to extend context parallelism to heterogeneous environments. Specifically, we will investigate heterogeneity in ring attention within IBM’s FMS. While earlier implementations demonstrated the benefits of context splitting across homogeneous GPUs, our focus is on uneven context allocation strategies: distributing query, key, and value shards across heterogeneous GPUs in proportion to their memory capacity, compute throughput, and interconnect bandwidth. By adapting context parallelism to heterogeneous clusters, we aim to mitigate performance degradation caused by weaker nodes and enable the scalability of long-context inference in heterogeneous environments.
+
+\section{Literature Review}
+\subsection{Review of Relevant Literature}
+
+\subsection{Identification of Gaps in Existing Research}
+
+\section{Methodology}
+\subsection{Model Selection}
+Our experiments are built on top of IBM’s Foundation Model Stack (FMS) implementation of LLaMA-style decoder-only transformers. Rather than running the full LLaMA-3.1-8B model end-to-end, we focus on a single multi-head self-attention layer with the same head configuration used in the FMS LLaMA blocks (e.g., $Q,K,V \in \mathbb{R}^{1 \times 8 \times L \times 64}$ in our logs). This isolates the effect of context sharding and communication/computation overlap in ring attention without confounding effects from feed-forward layers or logits projection.
+
+We introduce a new RingAttentionStrategy, which exposes a block\_lens argument to control how many tokens are assigned to each rank. The strategy manages a default compute stream and a dedicated communication stream so that peer-to-peer KV transfers can overlap with attention compute in the ring. The LLaMA implementation is extended to call a custom ring\_forward function, which replaces the standard attention block.
+
+The core of the implementation is a pass-KV ring attention kernel in which queries remain local while keys and values are rotated around the ring. The kernel uses an online softmax formulation, allowing us to accumulate attention outputs across KV blocks without materializing the full attention matrix.
+
+\subsection{Optimization Procedure}
+\subsection{Profiling tools and methods}
+\subsection{Evaluation Metrics}
+
+\section{Experimental Results}
+
+\subsection{Experimental Setup}
+\subsection{ Performance Comparison}
+
+\section{Discussion}
+\subsection{Interpretation of Results}
+\subsection{Comparison with Previous Studies}
+\subsection{Challenges and Limitations}
+\subsection{Future Directions}
+
+\section{Conclusion}
+\subsection{Summary of Findings}
+\subsection{Contributions}
+\subsection{Recommendations for Future Research}
+
+\bibliographystyle{IEEEtran}
+\bibliography{ref}
+
+\end{document}

@@ -49,12 +49,6 @@
       url={https://arxiv.org/abs/2310.01889}, 
 }
 
-@inproceedings{10.1145/3669940.3707215,
-author = {Mei, Yixuan and Zhuang, Yonghao and Miao, Xupeng and Yang, Juncheng and Jia, Zhihao and Vinayak, Rashmi},
-title = {Helix: Serving Large Language Models over Heterogeneous GPUs and Network via Max-Flow},
-series = {ASPLOS '25}
-}
-
 @ARTICLE{11150566,
   author={Yuan, Zhengyi and Wang, Xiong and Nie, Yuntao and Tao, Yufei and Li, Yuqing and Shao, Zhiyuan and Liao, Xiaofei and Li, Bo and Jin, Hai},
   journal={IEEE Transactions on Parallel and Distributed Systems}, 
@@ -104,24 +98,6 @@ series = {ASPLOS '25}
   note         = {Accessed: 2025-10-05}
 }
 
-@inproceedings{10.1145/3669940.3707215,
-author = {Mei, Yixuan and Zhuang, Yonghao and Miao, Xupeng and Yang, Juncheng and Jia, Zhihao and Vinayak, Rashmi},
-title = {Helix: Serving Large Language Models over Heterogeneous GPUs and Network via Max-Flow},
-year = {2025},
-isbn = {9798400706981},
-publisher = {Association for Computing Machinery},
-address = {New York, NY, USA},
-url = {https://doi.org/10.1145/3669940.3707215},
-doi = {10.1145/3669940.3707215},
-abstract = {This paper introduces Helix, a distributed system for high-throughput, low-latency large language model (LLM) serving in heterogeneous GPU clusters. The key idea behind Helix is to formulate inference computation of LLMs over heterogeneous GPUs and network connections as a max-flow problem on directed, weighted graphs, whose nodes represent GPU instances and edges capture both GPU and network heterogeneity through their capacities. Helix then uses a mixed integer linear programming (MILP) algorithm to discover highly optimized strategies to serve LLMs on heterogeneous GPUs. This approach allows Helix to jointly optimize model placement and request scheduling, two highly entangled tasks in heterogeneous LLM serving. Our evaluation on several heterogeneous clusters ranging from 24 to 42 GPU nodes shows that Helix improves serving throughput by up to 3.3x and reduces prompting and decoding latency by up to 66\% and 24\%, respectively, compared to existing approaches. Helix is available at https://github.com/Thesys-lab/Helix-ASPLOS25.},
-booktitle = {Proceedings of the 30th ACM International Conference on Architectural Support for Programming Languages and Operating Systems, Volume 1},
-pages = {586–602},
-numpages = {17},
-keywords = {cloud computing, distributed systems, large language model serving, system for ml},
-location = {Rotterdam, Netherlands},
-series = {ASPLOS '25}
-}
-
 @article{liu2025cronus,
   title={Cronus: Efficient LLM inference on Heterogeneous GPU Clusters via Partially Disaggregated Prefill},
   author={Liu, Yunzhao and Xu, Qiang and Hu, Y Charlie},
@@ -142,5 +118,21 @@ series = {ASPLOS '25}
   author={Acharya, Shantanu and Jia, Fei and Ginsburg, Boris},
   journal={arXiv preprint arXiv:2411.17116},
   year={2024}
+}
+
+@misc{foundation_model_stack,
+  author       = {{IBM Research}},
+  title        = {Foundation Model Stack (FMS)},
+  howpublished = {\url{https://github.com/foundation-model-stack/foundation-model-stack}},
+  year         = {2024},
+  note         = {Accessed: 2025-12-01}
+}
+
+@misc{nvidia_mps_docs,
+  author       = {{NVIDIA Corporation}},
+  title        = {Multi-Process Service (MPS) Documentation},
+  howpublished = {\url{https://docs.nvidia.com/deploy/mps/index.html}},
+  year         = {2024},
+  note         = {Accessed: 2025-12-01}
 }
 

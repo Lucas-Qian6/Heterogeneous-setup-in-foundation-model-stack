@@ -7,6 +7,8 @@
 \usepackage{graphicx}
 \usepackage{textcomp}
 \usepackage{xcolor}
+\usepackage{url}
+\usepackage[breaklinks=true]{hyperref}
 \def\BibTeX{{\rm B\kern-.05em{\sc i\kern-.025em b}\kern-.08em
     T\kern-.1667em\lower.7ex\hbox{E}\kern-.125emX}}
 \begin{document}
@@ -73,7 +75,7 @@ Finally, several algorithmic variants aim to support long or unbounded context l
 %%There is also work on algorithmic variants for long-context attention that aim to reduce the effective cost per token without changing the underlying hardware. Star Attention and Infini-attention both restructure the attention pattern to support infinite or near-infinite context via sparsity, compressed state, or special memory tokens, rather than by sharding the KV cache across devices \cite{acharya2024star,munkhdalai2024leave}. While these methods significantly improve scalability for a single model instance, they introduce architectural changes and approximations to standard attention, and they do not address how to balance work across heterogeneous GPUs within an existing exact ring-attention setup.
 
 \subsection{Identification of Gaps in Existing Research}
-Existing ring\-attention implementations assume symmetric hardware and therefore partition the KV cache uniformly. In heterogeneous settings, this leads directly to the straggler behavior described earlier: faster GPUs frequently idle while waiting for slower ranks to complete their portion of attention and communication, reducing overall throughput to that of the weakest rank.
+Existing ring attention implementations assume symmetric hardware and therefore partition the KV cache uniformly. In heterogeneous settings, this leads directly to the straggler behavior described earlier: faster GPUs frequently idle while waiting for slower ranks to complete their portion of attention and communication, reducing overall throughput to that of the weakest rank.
 
 Moreover, most ring-attention implementations combine FlashAttention-style kernels with homogeneous context splits. They exploit tiling and SRAM reuse on each device, but they do not adapt how many tokens each GPU owns based on its effective throughput, nor do they combine this with an online-softmax formulation that can safely aggregate attention across uneven KV shards.
 
@@ -88,7 +90,7 @@ We introduce a new RingAttentionStrategy, which exposes a block\_lens argument t
 The core of the implementation is a pass-KV ring attention kernel in which queries remain local while keys and values are rotated around the ring. The kernel uses an online softmax formulation, allowing us to accumulate attention outputs across KV blocks without materializing the full attention matrix.
 
 \subsection{Triton Kernels for Online Softmax}
-To efficiently support online softmax in the ring, we implement custom Triton kernels. Our extension computes block-wise softmax statistics for tiles of size (BLOCK\_Q, BLOCK\_K). These kernels return per-query partial sums and maxima that are merged by the online softmax update rule. The diagonal blocks (local queries attending local keys) and off-diagonal blocks (queries attending remote KV segments) are both handled in this tiled fashion; the off-diagonal path uses the Triton kernel we added. This setup lets us keep the online softmax logic in PyTorch while offloading the heavy per-tile GEMM and reduction work to Triton.
+To efficiently support online softmax in the ring, we implement custom Triton kernels. Our extension computes block-wise softmax statistics for tiles of size (BLOCK\_Q, BLOCK\_K). These kernels return per-query partial sums and maxima that are merged by the online softmax update rule. Both diagonal blocks (local queries attending local keys) and off-diagonal blocks (queries attending remote KV segments) use the same Triton kernel to ensure all ranks execute identical code paths and avoid NCCL deadlocks. This setup lets us keep the online softmax merging logic in PyTorch while offloading the heavy per-tile GEMM and reduction work to Triton.
 
 \subsection{Optimization Procedure}
 Given a heterogeneous ring where rank capabilities differ, the key challenge is determining how to partition the sequence across ranks. We investigate four partitioning strategies that vary in complexity and information requirements.
@@ -160,14 +162,6 @@ To isolate systems-level behavior from model semantics, we use synthetic inputs 
 
 Each configuration is run five times following a warmup pass, and we report the median latency. The homogeneous baseline runs both ranks at 100\% MPS with an even KV partition.
 
-%All experiments are conducted on a single node equipped with two NVIDIA L40 GPUs. We use IBM's Foundation Model Stack with our custom Ring-Attention implementation.
-
-%Hardware heterogeneity is simulated rather than using different GPU models. To simulate heterogeneity, we run rank 0 at 100\% MPS and vary rank 1's MPS allocation from 10\% to 90\% in increments of 10\%. This creates heterogeneity ratios ranging from 1.1:1 (mild) to 10:1 (severe). We sweep sequence lengths from 4,096 to 65,536 tokens, covering the range relevant to long-context inference workloads.
-
-%To decouple systems behavior from model quality, we use synthetic inputs throughout. For the single-layer ring-attention microbenchmarks, we directly sample random Q,K,V tensors on GPU.
-
-Each configuration is run 5 times after a warmup pass, and we report the median latency. The reference homogeneous baseline runs both ranks at 100\% MPS with even partitioning.
-
 \subsection{Performance Comparison}
 Figure~\ref{fig:strategy_eval} presents the main experimental results, showing slowdown factor relative to the homogeneous baseline across all sequence lengths and MPS configurations. Several patterns emerge from these results.
 
@@ -236,7 +230,7 @@ We investigated the impact of GPU heterogeneity on ring attention performance an
 \end{itemize}
 
 \subsection{Contributions}
-This work makes three contributions. First, we quantify the performance impact of heterogeneity in ring attention, establishing that the straggler effect causes substantial slowdown even at moderate capability differences. Second, we propose and evaluate multiple partitioning strategies for heterogeneous rings, identifying proportional allocation as an effective and practical approach. Third, we provide an open-source implementation of heterogeneity-aware ring attention in IBM's FMS framework.
+This work makes three contributions. First, we quantify the performance impact of heterogeneity in ring attention, establishing that the straggler effect causes substantial slowdown even at moderate capability differences. Second, we propose and evaluate multiple partitioning strategies for heterogeneous rings, identifying proportional allocation as an effective and practical approach. Third, we provide an open-source implementation of heterogeneity-aware ring attention in IBM's FMS framework, available at \url{https://github.com/AnshSG13/hetero_gpu_context_parallelism}.
 
 \subsection{Recommendations for Future Research}
 Based on our findings, we recommend that distributed inference frameworks treat heterogeneity-aware partitioning as a first-class design concern. The proportional allocation scheme we evaluated is simple to implement and already recovers most of the lost throughput under heterogeneous MPS configurations, making it a low-cost addition to existing ring-attention implementations. Future work should extend these techniques to multi-node deployments and explore dynamic adaptation of shard sizes based on online measurements of per-rank performance, rather than relying on a one-time calibration pass.

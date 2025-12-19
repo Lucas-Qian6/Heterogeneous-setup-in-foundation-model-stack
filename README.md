@@ -112,5 +112,5 @@ This section describes the code changes and new components introduced to support
 ### Notes
 
 - The current implementation focuses on **prefill (prompt processing)** rather than decode
-- Query tensors remain evenly distributed; heterogeneity-aware partitioning is applied to KV shards
+- Both query and KV tensors use heterogeneity-aware partitioning based on `block_lens`
 - Support for dynamic rebalancing and multi-rank (>2) heterogeneous rings is future work

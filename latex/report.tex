@@ -231,7 +231,7 @@ On the kernel and system side, several directions are especially promising:
 \begin{enumerate}
     \item[a.] \textbf{GQA Kernel Optimization:} Our current Triton kernels target standard multi-head attention; extending them to Grouped Query Attention would be important for modern LLM architectures, where reducing KV bandwidth and memory traffic is critical.
     \item[b.] \textbf{Disaggregated Prefill–Decode:} The prefill phase is predominantly compute-bound, while decode is often memory and bandwidth-bound. A disaggregated architecture that treats prefill and decode as separate services could assign long-context prefill to faster GPUs and route decode to memory-optimized or cheaper accelerators, enabling finer-grained use of heterogeneous hardware.
-    \item[c.] \textbf{Advanced Q/KV Partitioning Algorithms:} Our proportional scheme is intentionally simple: KV tokens are split by measured throughput ratios, and queries remain evenly distributed. A natural next step is to design more sophisticated partitioning policies that jointly optimize Q and KV sharding, take into account network topology and contention, and potentially re-balance shards at runtime as loads change.
+    \item[c.] \textbf{Advanced Q/KV Partitioning Algorithms:} Our proportional scheme is intentionally simple: both Q and KV tokens are split by measured throughput ratios. A natural next step is to design more sophisticated partitioning policies that take into account network topology and contention, and potentially re-balance shards at runtime as loads change.
 \end{enumerate}
 
 \bibliographystyle{IEEEtran}

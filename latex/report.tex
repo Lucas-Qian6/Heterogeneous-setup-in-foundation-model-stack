@@ -116,7 +116,7 @@ Figure~\ref{fig:token_dist} illustrates how these strategies redistribute tokens
 \end{figure}
 
 \subsection{Profiling Tools and Methods}
-To simulate heterogeneous GPU performance within a homogeneous cluster, we use NVIDIA's Multi-Process Service (MPS) \cite{nvidia_mps_docs} to throttle individual GPUs to a fraction of their full compute capacity. MPS allows multiple processes to share a GPU and, critically, enables limiting the percentage of Streaming Multiprocessors (SM) resources available to each process. By setting MPS active thread percentage to values between 10\% and 100\%, we can emulate GPUs with varying compute capabilities.
+To simulate heterogeneous GPU performance within a homogeneous cluster, we use NVIDIA's Multi-Process Service (MPS) \cite{nvidia_mps_docs} to throttle individual GPUs to a fraction of their full compute capacity. MPS allows multiple processes to share a GPU and, critically, enables limiting the percentage of Streaming Multiprocessors (SM) resources available to each process. Specifically, we set the \texttt{CUDA\_MPS\_ACTIVE\_THREAD\_PERCENTAGE} environment variable to values between 10\% and 100\% before launching each rank, which restricts the fraction of GPU compute resources available to that process. This allows us to emulate GPUs with varying compute capabilities on identical hardware.
 
 We first characterize the relationship between MPS throttling and actual compute performance through a custom benchmark. Figure~\ref{fig:matmul_latency} shows matrix multiplication latency across different matrix sizes and MPS settings. The results confirm that MPS throttling produces predictable performance degradation that scales with problem size.
 

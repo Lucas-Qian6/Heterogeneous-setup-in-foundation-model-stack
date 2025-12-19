@@ -226,7 +226,7 @@ class LLaMAHeadless(nn.Module):
 
         layers = []
         for i in range(self.config.nlayers):
-            block: nn.Module = LLaMABlock(self.config, self.rot_emb)
+            block = LLaMABlock(self.config, self.rot_emb)
             block.distributed_strategy = distributed_strategy
             block._use_ring = isinstance(distributed_strategy, RingAttentionStrategy)
             block = self.distributed_strategy.distribute_layer(block, i)

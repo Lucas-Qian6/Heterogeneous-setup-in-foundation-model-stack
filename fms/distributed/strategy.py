@@ -201,8 +201,8 @@ class RingAttentionStrategy(DistributedStrategy):
         self.block_size = max(self.block_lens)
         self._original_seq_len: Optional[int] = None
     
-        # Dedicated CUDA stream for async communication overlap
-        self._comm_stream = torch.cuda.Stream(priority=-1) if torch.cuda.is_available() else None
+        # Dedicated CUDA stream for async communication overlap (CUDA required for ring attention)
+        self._comm_stream = torch.cuda.Stream(priority=-1)
 
 
 

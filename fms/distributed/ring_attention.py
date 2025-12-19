@@ -1,7 +1,7 @@
 import math
 import torch
 from torch import Tensor
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple
 
 from fms.modules.attention import MultiHeadAttention
 from fms.distributed.strategy import RingAttentionStrategy
@@ -221,7 +221,7 @@ def _compute_qkv_and_rope(
         if valid_rope_pos_mask.any():
             rope_internal_max_seq_len = getattr(attn.position_encoder, "max_seq_len", 2048)
             clamped_rope_ids = rope_position_ids.clamp(0, rope_internal_max_seq_len - 1)
-            q, k = attn.position_encoder.adjusted_qk(q, k, clamped_rope_ids)
+            q, k = attn.position_encoder.adjusted_qk(q, k, clamped_rope_ids, past_kv_state=None)
 
     q, k, v = [x_tensor.permute(0, 2, 1, 3) for x_tensor in (q, k, v)]
     if nheads != kvheads:
@@ -418,7 +418,7 @@ def _compute_attention_ring_pass_kv(
                     did_offdiag_compute = True
 
         # Record compute end event on DEFAULT stream
-        if compute_end:
+        if compute_start is not None and compute_end is not None:
             compute_end.record()
             compute_events.append((compute_start, compute_end))
 
@@ -429,6 +429,7 @@ def _compute_attention_ring_pass_kv(
 
         # 4. Wait for comm and get new K,V for next iteration
         if i < strategy.world_size - 1 and not _DEBUG_DISABLE_COMM:
+            assert reqs is not None and recv_k is not None and recv_v is not None and recv_len is not None
             cur_k, cur_v, cur_len, comm_end_event, sync_event = strategy.ring_shift_kv_wait(
                 reqs, recv_k, recv_v, recv_len, enable_timing=PROFILE
             )
